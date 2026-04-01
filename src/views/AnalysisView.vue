@@ -41,46 +41,128 @@ const chartRef = ref(null)
 const isFetchingMore = ref(false)
 // 普通变量，不触发 computed 重算
 let savedZoom = { start: 50, end: 100 }
+let lastFetchMoreTime = 0 // 加载历史数据的冷却时间戳
 
-// K线数据 [日期, open, close, low, high, rawTs]（shallowRef：WS index 赋值不触发 computed）
+// K线数据，每项为对象: { date, ts, open, close, low, high, vol, ma5, ma10, ma20, ema12, ema26, dif, dea, macd, channelUp, channelMid, channelDn, bollUp, bollMid, bollDn, k, d, j, rsi6, rsi12, rsi24 }
 const klineRaw = shallowRef([])
-const dates = computed(() => klineRaw.value.map((k) => k[0]))
 
-// 计算移动均线
-function calcMA(closes, n) {
-  return closes.map((_, i) => {
-    if (i < n - 1) return null
-    const sum = closes.slice(i - n + 1, i + 1).reduce((a, b) => a + b, 0)
-    return +(sum / n).toFixed(4)
-  })
+// 根据周期格式化时间轴标签
+function fmtTs(ts) {
+  const d = new Date(Number(ts))
+  if (['1Dutc', '1Wutc', '1D', '1W'].includes(selectedPeriod.value)) {
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+  }
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function toNum(v) {
+  const n = parseFloat(v)
+  return isNaN(n) ? null : n
+}
+
+function mapToRow(item) {
+  return {
+    date: fmtTs(item.ts),
+    ts: item.ts,
+    open: item.open,
+    close: item.close,
+    low: item.low,
+    high: item.high,
+    vol: item.vol,
+    ma5: item.ma5,
+    ma10: item.ma10,
+    ma20: item.ma20,
+    ema12: item.ema12,
+    ema26: item.ema26,
+    bollUp: item.bollUp,
+    bollMid: item.bollMid,
+    bollDn: item.bollDn,
+    k: item.k,
+    d: item.d,
+    j: item.j,
+    rsi6: item.rsi6,
+    rsi12: item.rsi12,
+    rsi24: item.rsi24,
+    dif: item.dif,
+    dea: item.dea,
+    macd: item.macd,
+    channelUp: item.channelUp,
+    channelMid: item.channelMid,
+    channelDn: item.channelDn,
+  }
 }
 
 const klineOption = computed(() => {
-  const closes = klineRaw.value.map((k) => Number(k[2]))
+  const data = klineRaw.value
+  const dates = data.map((k) => k.date)
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
-    legend: { data: ['K线', 'MA5', 'MA10'], top: 4 },
+    legend: [
+      {
+        data: ['K线', 'MA5', 'MA10', 'MA20', 'EMA12', 'EMA26', 'BOLL上', 'BOLL中', 'BOLL下', '通道上', '通道中', '通道下'],
+        top: 2,
+        left: '9%',
+        itemWidth: 14,
+        itemHeight: 2,
+        textStyle: { fontSize: 11 },
+      },
+      {
+        data: ['DIF', 'DEA', 'MACD'],
+        top: '50%',
+        left: '9%',
+        itemWidth: 14,
+        itemHeight: 2,
+        textStyle: { fontSize: 10 },
+      },
+      {
+        data: ['K', 'D', 'J'],
+        top: '62%',
+        left: '9%',
+        itemWidth: 14,
+        itemHeight: 2,
+        textStyle: { fontSize: 10 },
+      },
+      {
+        data: ['RSI6', 'RSI12', 'RSI24'],
+        top: '74%',
+        left: '9%',
+        itemWidth: 14,
+        itemHeight: 2,
+        textStyle: { fontSize: 10 },
+      },
+    ],
     grid: [
-      { left: '3%', right: '4%', top: '10%', height: '58%', containLabel: true },
-      { left: '3%', right: '4%', top: '74%', height: '18%', containLabel: true },
+      { left: '8%', right: '2%', top: '6%', height: '34%', containLabel: false },
+      { left: '8%', right: '2%', top: '42%', height: '7%', containLabel: false },
+      { left: '8%', right: '2%', top: '51%', height: '10%', containLabel: false },
+      { left: '8%', right: '2%', top: '63%', height: '10%', containLabel: false },
+      { left: '8%', right: '2%', top: '75%', height: '10%', containLabel: false },
     ],
     xAxis: [
-      { type: 'category', data: dates.value, gridIndex: 0, barCategoryGap: '0%' },
-      { type: 'category', data: dates.value, gridIndex: 1, axisLabel: { show: false } },
+      { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { onZero: false } },
+      { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false } },
+      { type: 'category', data: dates, gridIndex: 2, axisLabel: { show: false } },
+      { type: 'category', data: dates, gridIndex: 3, axisLabel: { show: false } },
+      { type: 'category', data: dates, gridIndex: 4, axisLabel: { show: true, fontSize: 10 } },
     ],
     yAxis: [
-      { type: 'value', scale: true, gridIndex: 0 },
-      { type: 'value', gridIndex: 1 },
+      { type: 'value', scale: true, gridIndex: 0, splitNumber: 4, axisLabel: { fontSize: 10 } },
+      { type: 'value', gridIndex: 1, splitNumber: 2, axisLabel: { show: false } },
+      { type: 'value', scale: true, gridIndex: 2, splitNumber: 3, axisLabel: { fontSize: 9 } },
+      { type: 'value', scale: true, gridIndex: 3, splitNumber: 3, axisLabel: { fontSize: 9 } },
+      { type: 'value', gridIndex: 4, min: 0, max: 100, splitNumber: 2, axisLabel: { fontSize: 9 } },
     ],
-    dataZoom: [{ type: 'inside', xAxisIndex: [0, 1], start: savedZoom.start, end: savedZoom.end }],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1, 2, 3, 4], start: savedZoom.start, end: savedZoom.end },
+    ],
     series: [
       {
         name: 'K线',
         type: 'candlestick',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        barMaxWidth: 8,
-        data: klineRaw.value.map((k) => [k[1], k[2], k[3], k[4]]),
+        barWidth: '80%',
+        data: data.map((k) => [k.open, k.close, k.low, k.high]),
         itemStyle: {
           color: '#10b981',
           color0: '#ef4444',
@@ -93,8 +175,8 @@ const klineOption = computed(() => {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: calcMA(closes, 5),
-        smooth: true,
+        data: data.map((k) => toNum(k.ma5)),
+        symbol: 'none',
         lineStyle: { color: '#6366f1', width: 1 },
         itemStyle: { color: '#6366f1' },
         connectNulls: true,
@@ -104,10 +186,109 @@ const klineOption = computed(() => {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: calcMA(closes, 10),
-        smooth: true,
+        data: data.map((k) => toNum(k.ma10)),
+        symbol: 'none',
         lineStyle: { color: '#f59e0b', width: 1 },
         itemStyle: { color: '#f59e0b' },
+        connectNulls: true,
+      },
+      {
+        name: 'MA20',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.ma20)),
+        symbol: 'none',
+        lineStyle: { color: '#ec4899', width: 1 },
+        itemStyle: { color: '#ec4899' },
+        connectNulls: true,
+      },
+      {
+        name: 'EMA12',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.ema12)),
+        symbol: 'none',
+        lineStyle: { color: '#14b8a6', width: 1, type: 'dashed' },
+        itemStyle: { color: '#14b8a6' },
+        connectNulls: true,
+      },
+      {
+        name: 'EMA26',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.ema26)),
+        symbol: 'none',
+        lineStyle: { color: '#f97316', width: 1, type: 'dashed' },
+        itemStyle: { color: '#f97316' },
+        connectNulls: true,
+      },
+      {
+        name: 'BOLL上',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.bollUp)),
+        symbol: 'none',
+        lineStyle: { color: '#94a3b8', width: 1, type: 'dotted' },
+        itemStyle: { color: '#94a3b8' },
+        connectNulls: true,
+      },
+      {
+        name: 'BOLL中',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.bollMid)),
+        symbol: 'none',
+        lineStyle: { color: '#64748b', width: 1, type: 'dotted' },
+        itemStyle: { color: '#64748b' },
+        connectNulls: true,
+      },
+      {
+        name: 'BOLL下',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.bollDn)),
+        symbol: 'none',
+        lineStyle: { color: '#94a3b8', width: 1, type: 'dotted' },
+        itemStyle: { color: '#94a3b8' },
+        connectNulls: true,
+      },
+      {
+        name: '通道上',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.channelUp)),
+        symbol: 'none',
+        lineStyle: { color: '#e879f9', width: 1.5 },
+        itemStyle: { color: '#e879f9' },
+        connectNulls: true,
+      },
+      {
+        name: '通道中',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.channelMid)),
+        symbol: 'none',
+        lineStyle: { color: '#c084fc', width: 1, type: 'dashed' },
+        itemStyle: { color: '#c084fc' },
+        connectNulls: true,
+      },
+      {
+        name: '通道下',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: data.map((k) => toNum(k.channelDn)),
+        symbol: 'none',
+        lineStyle: { color: '#e879f9', width: 1.5 },
+        itemStyle: { color: '#e879f9' },
         connectNulls: true,
       },
       {
@@ -115,21 +296,117 @@ const klineOption = computed(() => {
         type: 'bar',
         xAxisIndex: 1,
         yAxisIndex: 1,
-        data: [],
-        itemStyle: { color: '#6366f1', opacity: 0.7 },
+        barWidth: '80%',
+        data: data.map((k) => ({
+          value: toNum(k.vol),
+          itemStyle: {
+            color: Number(k.close) >= Number(k.open) ? '#10b981' : '#ef4444',
+            opacity: 0.7,
+          },
+        })),
+      },
+      {
+        name: 'DIF',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: data.map((k) => toNum(k.dif)),
+        symbol: 'none',
+        lineStyle: { color: '#6366f1', width: 1 },
+        itemStyle: { color: '#6366f1' },
+        connectNulls: true,
+      },
+      {
+        name: 'DEA',
+        type: 'line',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        data: data.map((k) => toNum(k.dea)),
+        symbol: 'none',
+        lineStyle: { color: '#f59e0b', width: 1 },
+        itemStyle: { color: '#f59e0b' },
+        connectNulls: true,
+      },
+      {
+        name: 'MACD',
+        type: 'bar',
+        xAxisIndex: 2,
+        yAxisIndex: 2,
+        barWidth: '80%',
+        data: data.map((k) => {
+          const v = toNum(k.macd)
+          return { value: v, itemStyle: { color: v >= 0 ? '#10b981' : '#ef4444' } }
+        }),
+      },
+      {
+        name: 'K',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: data.map((k) => toNum(k.k)),
+        symbol: 'none',
+        lineStyle: { color: '#6366f1', width: 1 },
+        itemStyle: { color: '#6366f1' },
+        connectNulls: true,
+      },
+      {
+        name: 'D',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: data.map((k) => toNum(k.d)),
+        symbol: 'none',
+        lineStyle: { color: '#f59e0b', width: 1 },
+        itemStyle: { color: '#f59e0b' },
+        connectNulls: true,
+      },
+      {
+        name: 'J',
+        type: 'line',
+        xAxisIndex: 3,
+        yAxisIndex: 3,
+        data: data.map((k) => toNum(k.j)),
+        symbol: 'none',
+        lineStyle: { color: '#ef4444', width: 1 },
+        itemStyle: { color: '#ef4444' },
+        connectNulls: true,
+      },
+      {
+        name: 'RSI6',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: data.map((k) => toNum(k.rsi6)),
+        symbol: 'none',
+        lineStyle: { color: '#6366f1', width: 1 },
+        itemStyle: { color: '#6366f1' },
+        connectNulls: true,
+      },
+      {
+        name: 'RSI12',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: data.map((k) => toNum(k.rsi12)),
+        symbol: 'none',
+        lineStyle: { color: '#f59e0b', width: 1 },
+        itemStyle: { color: '#f59e0b' },
+        connectNulls: true,
+      },
+      {
+        name: 'RSI24',
+        type: 'line',
+        xAxisIndex: 4,
+        yAxisIndex: 4,
+        data: data.map((k) => toNum(k.rsi24)),
+        symbol: 'none',
+        lineStyle: { color: '#10b981', width: 1 },
+        itemStyle: { color: '#10b981' },
+        connectNulls: true,
       },
     ],
   }
 })
-
-// 根据周期格式化时间轴标签
-function fmtTs(ts) {
-  const d = new Date(Number(ts))
-  if (['1Dutc', '1Wutc', '1D', '1W'].includes(selectedPeriod.value)) {
-    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
-  }
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
 
 async function fetchKline() {
   if (!selectedCoin.value) return
@@ -142,16 +419,7 @@ async function fetchKline() {
   })
   const list = Array.isArray(res) ? res : []
   const sorted = [...list].reverse()
-
-  // klineRaw 格式: [日期, open, close, low, high, rawTs]
-  klineRaw.value = sorted.map((item) => [
-    fmtTs(item.ts),
-    item.open,
-    item.close,
-    item.low,
-    item.high,
-    item.ts,
-  ])
+  klineRaw.value = sorted.map(mapToRow)
 
   // 更新行情统计
   if (sorted.length) {
@@ -167,7 +435,7 @@ async function fetchKline() {
       up: Number(changeVal) >= 0,
       high: Math.max(...sorted.map((k) => Number(k.high))).toFixed(2),
       low: Math.min(...sorted.map((k) => Number(k.low))).toFixed(2),
-      volume: '--',
+      volume: Number(latest.vol).toLocaleString(),
     }
   }
 }
@@ -186,26 +454,29 @@ function sendWsSubscribe() {
 
 // 放大/拖动时保存缩放状态，并在左侧边缘预加载历史数据
 async function handleDataZoom(evt) {
-  // inside dataZoom 事件有时以 batch 数组形式推送
   const dz = evt?.batch?.[0] ?? evt
   if (!dz) return
 
-  // 保存当前缩放状态到普通变量（不触发 computed），直接用事件数据，避免 chart.getOption() 深拷贝
   savedZoom.start = dz.start ?? 50
   savedZoom.end = dz.end ?? 100
 
   if (isFetchingMore.value || !klineRaw.value.length) return
+  // 仅当缩放百分比 < 3% 时才认为触达左侧边缘，避免普通拖拽误触
+  if ((dz.start ?? 50) > 3) return
+  // 冷却 3 秒，防止连续触发
+  const now = Date.now()
+  if (now - lastFetchMoreTime < 3000) return
+
   const startValue = dz.startValue ?? 0
   const endValue = dz.endValue ?? klineRaw.value.length - 1
-  // 左拉触底（startValue === 0）才请求历史数据
-  if (startValue > 0) return
 
   const chart = chartRef.value?.chart
   if (!chart) return
 
   isFetchingMore.value = true
+  lastFetchMoreTime = now
   try {
-    const earliestTs = klineRaw.value[0][5]
+    const earliestTs = klineRaw.value[0].ts
     const res = await getMarkPriceCandles({
       instId: selectedCoin.value,
       bar: selectedPeriod.value,
@@ -215,16 +486,16 @@ async function handleDataZoom(evt) {
     const list = Array.isArray(res) ? res : []
     if (!list.length) return
     const sorted = [...list].reverse()
-    const newRows = sorted.map((item) => [
-      fmtTs(item.ts),
-      item.open,
-      item.close,
-      item.low,
-      item.high,
-      item.ts,
-    ])
+    const newRows = sorted.map(mapToRow)
+    // 预计算新的缩放百分比，避免 shallowRef 赋值触发 computed 重渲染时跳到错误的位置
+    const oldLen = klineRaw.value.length
+    const newLen = newRows.length + oldLen
+    const shift = (newRows.length / newLen) * 100
+    savedZoom = {
+      start: shift + (savedZoom.start / 100) * (oldLen / newLen) * 100,
+      end: shift + (savedZoom.end / 100) * (oldLen / newLen) * 100,
+    }
     klineRaw.value = [...newRows, ...klineRaw.value]
-    // 插入 N 条后，把视口索引整体右移 N，保持当前可见区域不变
     await nextTick()
     chart.dispatchAction({
       type: 'dataZoom',
@@ -257,43 +528,101 @@ function handleWsMessage(raw) {
   if (pushInstId !== selectedCoin.value) return
 
   const item = msg.data[0]
-  const row = [fmtTs(item.ts), item.open, item.close, item.low, item.high, item.ts]
-
   if (!klineRaw.value.length) return
 
   const lastRow = klineRaw.value[klineRaw.value.length - 1]
 
-  if (lastRow[5] === item.ts) {
-    klineRaw.value[klineRaw.value.length - 1] = row
+  if (lastRow.ts === item.ts) {
+    // 同一根 K 线更新：保留 REST 提供的指标值
+    const updatedRow = {
+      ...lastRow,
+      date: fmtTs(item.ts),
+      ts: item.ts,
+      open: item.open,
+      close: item.close,
+      low: item.low,
+      high: item.high,
+      vol: item.vol,
+    }
+    // 直接就地修改，不重新赋值 shallowRef，避免触发 computed 重渲染
+    klineRaw.value[klineRaw.value.length - 1] = updatedRow
   } else {
-    klineRaw.value.push(row)
+    // 新 K 线：指标值设为 null（WS 不含指标数据，不应沿用上一根的值）
+    const newRow = {
+      date: fmtTs(item.ts),
+      ts: item.ts,
+      open: item.open,
+      close: item.close,
+      low: item.low,
+      high: item.high,
+      vol: item.vol,
+      ma5: null, ma10: null, ma20: null,
+      ema12: null, ema26: null,
+      dif: null, dea: null, macd: null,
+      channelUp: null, channelMid: null, channelDn: null,
+      bollUp: null, bollMid: null, bollDn: null,
+      k: null, d: null, j: null,
+      rsi6: null, rsi12: null, rsi24: null,
+    }
+    klineRaw.value.push(newRow)
   }
 
   // 直接增量更新 ECharts，不触发 computed 重算（保留 dataZoom 状态）
   const chart = chartRef.value?.chart
   if (chart) {
-    const closes = klineRaw.value.map((k) => Number(k[2]))
+    const data = klineRaw.value
+    const dates = data.map((k) => k.date)
     chart.setOption({
-      xAxis: [{ data: klineRaw.value.map((k) => k[0]) }, { data: klineRaw.value.map((k) => k[0]) }],
+      xAxis: [{ data: dates }, { data: dates }, { data: dates }, { data: dates }, { data: dates }],
       series: [
-        { data: klineRaw.value.map((k) => [k[1], k[2], k[3], k[4]]) },
-        { data: calcMA(closes, 5) },
-        { data: calcMA(closes, 10) },
-        { data: [] },
+        { data: data.map((k) => [k.open, k.close, k.low, k.high]) },
+        { data: data.map((k) => toNum(k.ma5)) },
+        { data: data.map((k) => toNum(k.ma10)) },
+        { data: data.map((k) => toNum(k.ma20)) },
+        { data: data.map((k) => toNum(k.ema12)) },
+        { data: data.map((k) => toNum(k.ema26)) },
+        { data: data.map((k) => toNum(k.bollUp)) },
+        { data: data.map((k) => toNum(k.bollMid)) },
+        { data: data.map((k) => toNum(k.bollDn)) },
+        { data: data.map((k) => toNum(k.channelUp)) },
+        { data: data.map((k) => toNum(k.channelMid)) },
+        { data: data.map((k) => toNum(k.channelDn)) },
+        {
+          data: data.map((k) => ({
+            value: toNum(k.vol),
+            itemStyle: {
+              color: Number(k.close) >= Number(k.open) ? '#10b981' : '#ef4444',
+              opacity: 0.7,
+            },
+          })),
+        },
+        { data: data.map((k) => toNum(k.dif)) },
+        { data: data.map((k) => toNum(k.dea)) },
+        { data: data.map((k) => {
+          const v = toNum(k.macd)
+          return { value: v, itemStyle: { color: v >= 0 ? '#10b981' : '#ef4444' } }
+        }) },
+        { data: data.map((k) => toNum(k.k)) },
+        { data: data.map((k) => toNum(k.d)) },
+        { data: data.map((k) => toNum(k.j)) },
+        { data: data.map((k) => toNum(k.rsi6)) },
+        { data: data.map((k) => toNum(k.rsi12)) },
+        { data: data.map((k) => toNum(k.rsi24)) },
       ],
     })
   }
 
   // 更新统计卡片
   stats.value.price = Number(item.close).toFixed(2)
-  const firstClose = Number(klineRaw.value[0][2])
+  stats.value.volume = Number(item.vol).toLocaleString()
+  const firstClose = Number(klineRaw.value[0].close)
   if (firstClose) {
     const changeVal = (((Number(item.close) - firstClose) / firstClose) * 100).toFixed(2)
     stats.value.change = `${Number(changeVal) >= 0 ? '+' : ''}${changeVal}%`
     stats.value.up = Number(changeVal) >= 0
   }
-  stats.value.high = Math.max(...klineRaw.value.map((k) => Number(k[4]))).toFixed(2)
-  stats.value.low = Math.min(...klineRaw.value.map((k) => Number(k[3]))).toFixed(2)
+  stats.value.high = Math.max(...klineRaw.value.map((k) => Number(k.high))).toFixed(2)
+  stats.value.low = Math.min(...klineRaw.value.map((k) => Number(k.low))).toFixed(2)
 }
 
 onUnmounted(() => {
@@ -312,66 +641,101 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
-    <div class="mb-6 flex flex-wrap items-center gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">币种分析</h1>
-        <p class="mt-1 text-sm text-gray-500">K线图及技术指标分析</p>
-      </div>
+  <div class="analysis-page">
+    <!-- 顶部工具栏：产品下拉 + 周期 + 行情摘要 -->
+    <div class="toolbar">
+      <el-select
+        v-model="selectedCoin"
+        placeholder="选择产品"
+        size="small"
+        filterable
+        style="width: 180px"
+      >
+        <el-option
+          v-for="c in coins"
+          :key="c.value"
+          :label="c.label"
+          :value="c.value"
+        />
+      </el-select>
+
+      <el-radio-group v-model="selectedPeriod" size="small" class="period-group">
+        <el-radio-button v-for="p in periods" :key="p" :value="p">{{ p }}</el-radio-button>
+      </el-radio-group>
+
+      <span class="stat-item">
+        <span class="stat-label">最新</span>
+        <span :class="stats.up ? 'text-green-600' : 'text-red-500'" class="stat-val">{{ stats.price }}</span>
+        <el-tag :type="stats.up ? 'success' : 'danger'" size="small" class="ml-1">{{ stats.change }}</el-tag>
+      </span>
+      <span class="stat-item">
+        <span class="stat-label">高</span>
+        <span class="text-green-600 stat-val">{{ stats.high }}</span>
+      </span>
+      <span class="stat-item">
+        <span class="stat-label">低</span>
+        <span class="text-red-500 stat-val">{{ stats.low }}</span>
+      </span>
+      <span class="stat-item">
+        <span class="stat-label">量</span>
+        <span class="stat-val">{{ stats.volume }}</span>
+      </span>
     </div>
 
-    <!-- Coin selector & period -->
-    <el-card shadow="hover" class="mb-4">
-      <div class="flex flex-wrap items-center gap-4">
-        <el-segmented v-model="selectedCoin" :options="coins" size="large" />
-        <el-divider direction="vertical" />
-        <el-radio-group v-model="selectedPeriod" size="default">
-          <el-radio-button v-for="p in periods" :key="p" :value="p">{{ p }}</el-radio-button>
-        </el-radio-group>
-      </div>
-    </el-card>
-
-    <!-- Coin Stats -->
-    <el-row :gutter="16" class="mb-4">
-      <el-col :span="6">
-        <el-card shadow="never" class="text-center">
-          <p class="text-xs text-gray-400">最新价</p>
-          <p class="mt-1 text-xl font-bold text-gray-900">{{ stats.price }}</p>
-          <el-tag :type="stats.up ? 'success' : 'danger'" size="small">{{ stats.change }}</el-tag>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="text-center">
-          <p class="text-xs text-gray-400">24h 最高</p>
-          <p class="mt-1 text-xl font-bold text-green-600">{{ stats.high }}</p>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="text-center">
-          <p class="text-xs text-gray-400">24h 最低</p>
-          <p class="mt-1 text-xl font-bold text-red-500">{{ stats.low }}</p>
-        </el-card>
-      </el-col>
-      <el-col :span="6">
-        <el-card shadow="never" class="text-center">
-          <p class="text-xs text-gray-400">24h 成交量</p>
-          <p class="mt-1 text-xl font-bold text-gray-900">{{ stats.volume }}</p>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- Kline Chart -->
-    <el-card shadow="hover">
-      <template #header>
-        <span class="font-semibold">{{ selectedCoin }}/USDT · {{ selectedPeriod }} K线图</span>
-      </template>
+    <!-- K线图 -->
+    <div class="chart-wrap">
       <v-chart
         ref="chartRef"
         :option="klineOption"
-        style="height: 500px"
+        class="chart-full"
         autoresize
         @datazoom="handleDataZoom"
       />
-    </el-card>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.analysis-page {
+  display: flex;
+  flex-direction: column;
+  /* 减去 TopNav + content padding 的高度 */
+  height: calc(100vh - 110px);
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.period-group :deep(.el-radio-button__inner) {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.stat-label {
+  color: #9ca3af;
+  font-size: 12px;
+}
+.stat-val {
+  font-weight: 600;
+}
+.chart-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+}
+.chart-full {
+  width: 100%;
+  height: 100%;
+}
+</style>
