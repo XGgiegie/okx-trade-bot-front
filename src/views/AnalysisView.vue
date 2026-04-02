@@ -35,7 +35,15 @@ const selectedPeriod = ref('1Dutc')
 const periods = ['1m', '15m', '30m', '1H', '4H', '1Dutc', '1Wutc']
 
 // 行情统计
-const stats = ref({ price: '--', change: '--', up: true, high: '--', low: '--', volume: '--' })
+const stats = ref({
+  price: '--',
+  change: '--',
+  up: true,
+  high: '--',
+  low: '--',
+  volume: '--',
+  trendType: '--',
+})
 
 const chartRef = ref(null)
 const isFetchingMore = ref(false)
@@ -43,8 +51,42 @@ const isFetchingMore = ref(false)
 let savedZoom = { start: 50, end: 100 }
 let lastFetchMoreTime = 0 // 加载历史数据的冷却时间戳
 
+// legend 选中状态（独立 ref，防止 computed 重算覆盖用户操作）
+const legendSelected = ref({
+  K线: true,
+  MA5: false,
+  MA10: false,
+  MA20: false,
+  EMA12: false,
+  EMA26: false,
+  BOLL上: false,
+  BOLL中: false,
+  BOLL下: false,
+  通道上: true,
+  通道中: true,
+  通道下: true,
+  趋势线: true,
+  趋势上轨: true,
+  趋势下轨: true,
+  成交量: true,
+  DIF: false,
+  DEA: false,
+  MACD: false,
+  K: false,
+  D: false,
+  J: false,
+  RSI6: false,
+  RSI12: false,
+  RSI24: false,
+})
+
+function handleLegendChanged(params) {
+  legendSelected.value = { ...params.selected }
+}
+
 // K线数据，每项为对象: { date, ts, open, close, low, high, vol, ma5, ma10, ma20, ema12, ema26, dif, dea, macd, channelUp, channelMid, channelDn, bollUp, bollMid, bollDn, k, d, j, rsi6, rsi12, rsi24 }
 const klineRaw = shallowRef([])
+const trendInfo = shallowRef(null)
 
 // 根据周期格式化时间轴标签
 function fmtTs(ts) {
@@ -89,17 +131,60 @@ function mapToRow(item) {
     channelUp: item.channelUp,
     channelMid: item.channelMid,
     channelDn: item.channelDn,
+    trendType: item.trendType,
   }
+}
+
+// 根据 trendInfo 计算趋势线、上轨、下轨数据（y = m*x + b，x 为服务端绝对索引）
+function computeTrendSeriesData(data) {
+  const trend = trendInfo.value
+  if (!trend || !trend.valid) return [[], [], []]
+  const startIdx = data.findIndex((k) => Number(k.ts) === Number(trend.startTs))
+  if (startIdx < 0) return [[], [], []]
+  const trendLineArr = [],
+    trendUpperArr = [],
+    trendLowerArr = []
+  for (let i = 0; i < data.length; i++) {
+    if (i < startIdx) {
+      trendLineArr.push(null)
+      trendUpperArr.push(null)
+      trendLowerArr.push(null)
+    } else {
+      const x = trend.startIndex + (i - startIdx)
+      trendLineArr.push(+(trend.m * x + trend.b).toFixed(4))
+      trendUpperArr.push(+(trend.m * x + trend.upperB).toFixed(4))
+      trendLowerArr.push(+(trend.m * x + trend.lowerB).toFixed(4))
+    }
+  }
+  return [trendLineArr, trendUpperArr, trendLowerArr]
 }
 
 const klineOption = computed(() => {
   const data = klineRaw.value
   const dates = data.map((k) => k.date)
+  const [trendLineData, trendUpperData, trendLowerData] = computeTrendSeriesData(data)
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     legend: [
       {
-        data: ['K线', 'MA5', 'MA10', 'MA20', 'EMA12', 'EMA26', 'BOLL上', 'BOLL中', 'BOLL下', '通道上', '通道中', '通道下'],
+        data: [
+          'K线',
+          'MA5',
+          'MA10',
+          'MA20',
+          'EMA12',
+          'EMA26',
+          'BOLL上',
+          'BOLL中',
+          'BOLL下',
+          '通道上',
+          '通道中',
+          '通道下',
+          '趋势线',
+          '趋势上轨',
+          '趋势下轨',
+        ],
+        selected: legendSelected.value,
         top: 2,
         left: '9%',
         itemWidth: 14,
@@ -108,6 +193,7 @@ const klineOption = computed(() => {
       },
       {
         data: ['DIF', 'DEA', 'MACD'],
+        selected: legendSelected.value,
         top: '50%',
         left: '9%',
         itemWidth: 14,
@@ -116,6 +202,7 @@ const klineOption = computed(() => {
       },
       {
         data: ['K', 'D', 'J'],
+        selected: legendSelected.value,
         top: '62%',
         left: '9%',
         itemWidth: 14,
@@ -124,6 +211,7 @@ const klineOption = computed(() => {
       },
       {
         data: ['RSI6', 'RSI12', 'RSI24'],
+        selected: legendSelected.value,
         top: '74%',
         left: '9%',
         itemWidth: 14,
@@ -139,7 +227,13 @@ const klineOption = computed(() => {
       { left: '8%', right: '2%', top: '75%', height: '10%', containLabel: false },
     ],
     xAxis: [
-      { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { onZero: false } },
+      {
+        type: 'category',
+        data: dates,
+        gridIndex: 0,
+        axisLabel: { show: false },
+        axisLine: { onZero: false },
+      },
       { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false } },
       { type: 'category', data: dates, gridIndex: 2, axisLabel: { show: false } },
       { type: 'category', data: dates, gridIndex: 3, axisLabel: { show: false } },
@@ -404,6 +498,39 @@ const klineOption = computed(() => {
         itemStyle: { color: '#10b981' },
         connectNulls: true,
       },
+      {
+        name: '趋势线',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: trendLineData,
+        symbol: 'none',
+        lineStyle: { color: '#facc15', width: 1.5 },
+        itemStyle: { color: '#facc15' },
+        connectNulls: false,
+      },
+      {
+        name: '趋势上轨',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: trendUpperData,
+        symbol: 'none',
+        lineStyle: { color: '#facc15', width: 1, type: 'dashed' },
+        itemStyle: { color: '#facc15' },
+        connectNulls: false,
+      },
+      {
+        name: '趋势下轨',
+        type: 'line',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: trendLowerData,
+        symbol: 'none',
+        lineStyle: { color: '#facc15', width: 1, type: 'dashed' },
+        itemStyle: { color: '#facc15' },
+        connectNulls: false,
+      },
     ],
   }
 })
@@ -412,6 +539,7 @@ async function fetchKline() {
   if (!selectedCoin.value) return
   isFetchingMore.value = false
   savedZoom = { start: 50, end: 100 }
+  trendInfo.value = null
   const res = await getMarkPriceCandles({
     instId: selectedCoin.value,
     bar: selectedPeriod.value,
@@ -528,6 +656,9 @@ function handleWsMessage(raw) {
   if (pushInstId !== selectedCoin.value) return
 
   const item = msg.data[0]
+  if (msg.trend) {
+    trendInfo.value = msg.trend
+  }
   if (!klineRaw.value.length) return
 
   const lastRow = klineRaw.value[klineRaw.value.length - 1]
@@ -543,6 +674,7 @@ function handleWsMessage(raw) {
       low: item.low,
       high: item.high,
       vol: item.vol,
+      trendType: item.trendType ?? lastRow.trendType,
     }
     // 直接就地修改，不重新赋值 shallowRef，避免触发 computed 重渲染
     klineRaw.value[klineRaw.value.length - 1] = updatedRow
@@ -556,13 +688,27 @@ function handleWsMessage(raw) {
       low: item.low,
       high: item.high,
       vol: item.vol,
-      ma5: null, ma10: null, ma20: null,
-      ema12: null, ema26: null,
-      dif: null, dea: null, macd: null,
-      channelUp: null, channelMid: null, channelDn: null,
-      bollUp: null, bollMid: null, bollDn: null,
-      k: null, d: null, j: null,
-      rsi6: null, rsi12: null, rsi24: null,
+      ma5: null,
+      ma10: null,
+      ma20: null,
+      ema12: null,
+      ema26: null,
+      dif: null,
+      dea: null,
+      macd: null,
+      channelUp: null,
+      channelMid: null,
+      channelDn: null,
+      bollUp: null,
+      bollMid: null,
+      bollDn: null,
+      k: null,
+      d: null,
+      j: null,
+      rsi6: null,
+      rsi12: null,
+      rsi24: null,
+      trendType: item.trendType ?? null,
     }
     klineRaw.value.push(newRow)
   }
@@ -572,6 +718,7 @@ function handleWsMessage(raw) {
   if (chart) {
     const data = klineRaw.value
     const dates = data.map((k) => k.date)
+    const [_tl, _tu, _tld] = computeTrendSeriesData(data)
     chart.setOption({
       xAxis: [{ data: dates }, { data: dates }, { data: dates }, { data: dates }, { data: dates }],
       series: [
@@ -598,16 +745,21 @@ function handleWsMessage(raw) {
         },
         { data: data.map((k) => toNum(k.dif)) },
         { data: data.map((k) => toNum(k.dea)) },
-        { data: data.map((k) => {
-          const v = toNum(k.macd)
-          return { value: v, itemStyle: { color: v >= 0 ? '#10b981' : '#ef4444' } }
-        }) },
+        {
+          data: data.map((k) => {
+            const v = toNum(k.macd)
+            return { value: v, itemStyle: { color: v >= 0 ? '#10b981' : '#ef4444' } }
+          }),
+        },
         { data: data.map((k) => toNum(k.k)) },
         { data: data.map((k) => toNum(k.d)) },
         { data: data.map((k) => toNum(k.j)) },
         { data: data.map((k) => toNum(k.rsi6)) },
         { data: data.map((k) => toNum(k.rsi12)) },
         { data: data.map((k) => toNum(k.rsi24)) },
+        { data: _tl },
+        { data: _tu },
+        { data: _tld },
       ],
     })
   }
@@ -615,6 +767,8 @@ function handleWsMessage(raw) {
   // 更新统计卡片
   stats.value.price = Number(item.close).toFixed(2)
   stats.value.volume = Number(item.vol).toLocaleString()
+  if (msg.trend?.trendType) stats.value.trendType = msg.trend.trendType
+  else if (item.trendType) stats.value.trendType = item.trendType
   const firstClose = Number(klineRaw.value[0].close)
   if (firstClose) {
     const changeVal = (((Number(item.close) - firstClose) / firstClose) * 100).toFixed(2)
@@ -651,12 +805,7 @@ onMounted(async () => {
         filterable
         style="width: 180px"
       >
-        <el-option
-          v-for="c in coins"
-          :key="c.value"
-          :label="c.label"
-          :value="c.value"
-        />
+        <el-option v-for="c in coins" :key="c.value" :label="c.label" :value="c.value" />
       </el-select>
 
       <el-radio-group v-model="selectedPeriod" size="small" class="period-group">
@@ -665,8 +814,12 @@ onMounted(async () => {
 
       <span class="stat-item">
         <span class="stat-label">最新</span>
-        <span :class="stats.up ? 'text-green-600' : 'text-red-500'" class="stat-val">{{ stats.price }}</span>
-        <el-tag :type="stats.up ? 'success' : 'danger'" size="small" class="ml-1">{{ stats.change }}</el-tag>
+        <span :class="stats.up ? 'text-green-600' : 'text-red-500'" class="stat-val">{{
+          stats.price
+        }}</span>
+        <el-tag :type="stats.up ? 'success' : 'danger'" size="small" class="ml-1">{{
+          stats.change
+        }}</el-tag>
       </span>
       <span class="stat-item">
         <span class="stat-label">高</span>
@@ -680,6 +833,20 @@ onMounted(async () => {
         <span class="stat-label">量</span>
         <span class="stat-val">{{ stats.volume }}</span>
       </span>
+      <span class="stat-item">
+        <span class="stat-label">趋势</span>
+        <el-tag
+          :type="
+            stats.trendType === 'UPTREND'
+              ? 'success'
+              : stats.trendType === 'DOWNTREND'
+                ? 'danger'
+                : 'warning'
+          "
+          size="small"
+          >{{ stats.trendType }}</el-tag
+        >
+      </span>
     </div>
 
     <!-- K线图 -->
@@ -690,6 +857,7 @@ onMounted(async () => {
         class="chart-full"
         autoresize
         @datazoom="handleDataZoom"
+        @legendselectchanged="handleLegendChanged"
       />
     </div>
   </div>
